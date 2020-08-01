@@ -13,10 +13,8 @@ from time import monotonic
 import requests
 
 from requests_futures.sessions import FuturesSession
-from torrequest import TorRequest
 from result import QueryStatus
 from result import QueryResult
-from notify import QueryNotifyPrint
 from sites  import SitesInformation
 
 module_name = "Sherlock: Find Usernames Across Social Networks"
@@ -25,7 +23,7 @@ __version__ = "0.12.3"
 app = Flask(__name__)
 
 @app.route('/sherlock/<string:username>', methods=['GET'])
-def get_tasks(username):
+def process_sherlock(username):
     try:
         sites = SitesInformation()
     except Exception as error:
@@ -37,10 +35,8 @@ def get_tasks(username):
         site_data_all[site.name] = site.information
     site_data = site_data_all
 
-    #Create notify object for query results.
-    query_notify = QueryNotifyPrint(result=None)
 
-    results = sherlock(username, site_data, query_notify)
+    results = sherlock(username, site_data)
     foobar = {}
     exists_counter = 0
     for website_name in results:
@@ -50,7 +46,6 @@ def get_tasks(username):
             foobar[website_name] = dictionary["url_user"]
 
     return jsonify(foobar)
-
 
 class SherlockFuturesSession(FuturesSession):
     def request(self, method, url, hooks={}, *args, **kwargs):
@@ -145,52 +140,10 @@ def get_response(request_future, error_type, social_network):
 
     return response, error_context, expection_text
 
-def sherlock(username, site_data, query_notify,
-             tor=False, unique_tor=False,
-             proxy=None, timeout=None):
-    """Run Sherlock Analysis.
-
-    Checks for existence of username on various social media sites.
-
-    Keyword Arguments:
-    username               -- String indicating username that report
-                              should be created against.
-    site_data              -- Dictionary containing all of the site data.
-    query_notify           -- Object with base type of QueryNotify().
-                              This will be used to notify the caller about
-                              query results.
-    tor                    -- Boolean indicating whether to use a tor circuit for the requests.
-    unique_tor             -- Boolean indicating whether to use a new tor circuit for each request.
-    proxy                  -- String indicating the proxy URL
-    timeout                -- Time in seconds to wait before timing out request.
-                              Default is no timeout.
-
-    Return Value:
-    Dictionary containing results from report. Key of dictionary is the name
-    of the social network site, and the value is another dictionary with
-    the following keys:
-        url_main:      URL of main site.
-        url_user:      URL of user on site (if account exists).
-        status:        QueryResult() object indicating results of test for
-                       account existence.
-        http_status:   HTTP status code of query which checked for existence on
-                       site.
-        response_text: Text that came back from request.  May be None if
-                       there was an HTTP error when checking for existence.
-    """
-
-    #Notify caller that we are starting the query.
-    query_notify.start(username)
-
-    # Create session based on request methodology
-    if tor or unique_tor:
-        #Requests using Tor obfuscation
-        underlying_request = TorRequest()
-        underlying_session = underlying_request.session
-    else:
-        #Normal requests
-        underlying_session = requests.session()
-        underlying_request = requests.Request()
+def sherlock(username, site_data):
+    #Normal requests
+    underlying_session = requests.session()
+    underlying_request = requests.Request()
 
     #Limit number of workers to 20.
     #This is probably vastly overkill.
@@ -240,7 +193,6 @@ def sherlock(username, site_data, query_notify,
             results_site["url_user"] = ""
             results_site['http_status'] = ""
             results_site['response_text'] = ""
-            query_notify.update(results_site['status'])
         else:
             # URL of user on site (if it exists)
             results_site["url_user"] = url
@@ -276,25 +228,13 @@ def sherlock(username, site_data, query_notify,
                 allow_redirects = True
 
             # This future starts running the request in a new thread, doesn't block the main thread
-            if proxy is not None:
-                proxies = {"http": proxy, "https": proxy}
-                future = request_method(url=url_probe, headers=headers,
-                                        proxies=proxies,
-                                        allow_redirects=allow_redirects,
-                                        timeout=timeout
-                                        )
-            else:
-                future = request_method(url=url_probe, headers=headers,
-                                        allow_redirects=allow_redirects,
-                                        timeout=timeout
-                                        )
+
+            future = request_method(url=url_probe, headers=headers,
+                        allow_redirects=allow_redirects
+                    )
 
             # Store future in data for access later
             net_info["request_future"] = future
-
-            # Reset identify for tor (if needed)
-            if unique_tor:
-                underlying_request.reset_identity()
 
         # Add this site's results into final dictionary with all of the other results.
         results_total[social_network] = results_site
@@ -398,8 +338,6 @@ def sherlock(username, site_data, query_notify,
                              f"site '{social_network}'")
 
 
-        #Notify caller about results of query.
-        query_notify.update(result)
 
         # Save status of request
         results_site['status'] = result
@@ -411,34 +349,9 @@ def sherlock(username, site_data, query_notify,
         # Add this site's results into final dictionary with all of the other results.
         results_total[social_network] = results_site
 
-    #Notify caller that all queries are finished.
-    query_notify.finish()
-
     return results_total
 
-def timeout_check(value):
-    """Check Timeout Argument.
+if __name__ == '__main__':
+    app.run(debug=True)
 
-    Checks timeout for validity.
 
-    Keyword Arguments:
-    value                  -- Time in seconds to wait before timing out request.
-
-    Return Value:
-    Floating point number representing the time (in seconds) that should be
-    used for the timeout.
-
-    NOTE:  Will raise an exception if the timeout in invalid.
-    """
-    from argparse import ArgumentTypeError
-
-    try:
-        timeout = float(value)
-    except:
-        raise ArgumentTypeError(f"Timeout '{value}' must be a number.")
-    if timeout <= 0:
-        raise ArgumentTypeError(f"Timeout '{value}' must be greater than 0.0s.")
-    return timeout
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=80)
