@@ -440,7 +440,5 @@ def timeout_check(value):
         raise ArgumentTypeError(f"Timeout '{value}' must be greater than 0.0s.")
     return timeout
 
-if __name__ == '__main__':
-    app.run(debug=True)
-
-
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=80)

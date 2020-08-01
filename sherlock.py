@@ -1,12 +1,7 @@
 #!flask/bin/python
-
-"""
-Sherlock: Find Usernames Across Social Networks Module
-
-This module contains the main logic to search for usernames at social
-networks.
-"""
-
+from flask import Flask, jsonify
+from flask import abort
+import json
 import csv
 import os
 import platform
@@ -14,8 +9,6 @@ import re
 import sys
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from time import monotonic
-from flask import Flask, jsonify
-from flask import abort
 
 import requests
 
@@ -31,31 +24,32 @@ __version__ = "0.12.3"
 
 app = Flask(__name__)
 
-tasks = [
-    {
-        'id': 1,
-        'title': u'Buy groceries',
-        'description': u'Milk, Cheese, Pizza, Fruit, Tylenol', 
-        'done': False
-    },
-    {
-        'id': 2,
-        'title': u'Learn Python',
-        'description': u'Need to find a good Python tutorial on the web', 
-        'done': False
-    }
-]
+@app.route('/sherlock/<string:username>', methods=['GET'])
+def get_tasks(username):
+    try:
+        sites = SitesInformation()
+    except Exception as error:
+        print(f"ERROR:  {error}")
+        sys.exit(1)
 
-@app.route('/todo/api/v1.0/tasks', methods=['GET'])
-def get_tasks():
-    return jsonify({'tasks': tasks})
+    site_data_all = {}
+    for site in sites:
+        site_data_all[site.name] = site.information
+    site_data = site_data_all
 
-@app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['GET'])
-def get_task(task_id):
-    task = [task for task in tasks if task['id'] == task_id]
-    if len(task) == 0:
-        abort(404)
-    return jsonify({'task': task[0]})
+    #Create notify object for query results.
+    query_notify = QueryNotifyPrint(result=None)
+
+    results = sherlock(username, site_data, query_notify)
+    foobar = {}
+    exists_counter = 0
+    for website_name in results:
+        dictionary = results[website_name]
+        if dictionary.get("status").status == QueryStatus.CLAIMED:
+            exists_counter += 1
+            foobar[website_name] = dictionary["url_user"]
+
+    return jsonify(foobar)
 
 
 class SherlockFuturesSession(FuturesSession):
@@ -121,7 +115,6 @@ class SherlockFuturesSession(FuturesSession):
                                                            hooks=hooks,
                                                            *args, **kwargs)
 
-
 def get_response(request_future, error_type, social_network):
 
     #Default for Response object if some failure occurs.
@@ -151,7 +144,6 @@ def get_response(request_future, error_type, social_network):
         expection_text = str(err)
 
     return response, error_context, expection_text
-
 
 def sherlock(username, site_data, query_notify,
              tor=False, unique_tor=False,
@@ -424,7 +416,6 @@ def sherlock(username, site_data, query_notify,
 
     return results_total
 
-
 def timeout_check(value):
     """Check Timeout Argument.
 
@@ -449,215 +440,5 @@ def timeout_check(value):
         raise ArgumentTypeError(f"Timeout '{value}' must be greater than 0.0s.")
     return timeout
 
-
-def main():
-
-    version_string = f"%(prog)s {__version__}\n" +  \
-                     f"{requests.__description__}:  {requests.__version__}\n" + \
-                     f"Python:  {platform.python_version()}"
-
-    parser = ArgumentParser(formatter_class=RawDescriptionHelpFormatter,
-                            description=f"{module_name} (Version {__version__})"
-                            )
-    parser.add_argument("--version",
-                        action="version",  version=version_string,
-                        help="Display version information and dependencies."
-                        )
-    parser.add_argument("--verbose", "-v", "-d", "--debug",
-                        action="store_true",  dest="verbose", default=False,
-                        help="Display extra debugging information and metrics."
-                        )
-    parser.add_argument("--rank", "-r",
-                        action="store_true", dest="rank", default=False,
-                        help="Present websites ordered by their Alexa.com global rank in popularity.")
-    parser.add_argument("--folderoutput", "-fo", dest="folderoutput",
-                        help="If using multiple usernames, the output of the results will be saved to this folder."
-                        )
-    parser.add_argument("--output", "-o", dest="output",
-                        help="If using single username, the output of the result will be saved to this file."
-                        )
-    parser.add_argument("--tor", "-t",
-                        action="store_true", dest="tor", default=False,
-                        help="Make requests over Tor; increases runtime; requires Tor to be installed and in system path.")
-    parser.add_argument("--unique-tor", "-u",
-                        action="store_true", dest="unique_tor", default=False,
-                        help="Make requests over Tor with new Tor circuit after each request; increases runtime; requires Tor to be installed and in system path.")
-    parser.add_argument("--csv",
-                        action="store_true",  dest="csv", default=False,
-                        help="Create Comma-Separated Values (CSV) File."
-                        )
-    parser.add_argument("--site",
-                        action="append", metavar='SITE_NAME',
-                        dest="site_list", default=None,
-                        help="Limit analysis to just the listed sites. Add multiple options to specify more than one site."
-                        )
-    parser.add_argument("--proxy", "-p", metavar='PROXY_URL',
-                        action="store", dest="proxy", default=None,
-                        help="Make requests over a proxy. e.g. socks5://127.0.0.1:1080"
-                        )
-    parser.add_argument("--json", "-j", metavar="JSON_FILE",
-                        dest="json_file", default=None,
-                        help="Load data from a JSON file or an online, valid, JSON file.")
-    parser.add_argument("--timeout",
-                        action="store", metavar='TIMEOUT',
-                        dest="timeout", type=timeout_check, default=None,
-                        help="Time (in seconds) to wait for response to requests. "
-                             "Default timeout of 60.0s."
-                             "A longer timeout will be more likely to get results from slow sites."
-                             "On the other hand, this may cause a long delay to gather all results."
-                        )
-    parser.add_argument("--print-found",
-                        action="store_true", dest="print_found_only", default=False,
-                        help="Do not output sites where the username was not found."
-                        )
-    parser.add_argument("--no-color",
-                        action="store_true", dest="no_color", default=False,
-                        help="Don't color terminal output"
-                        )
-    parser.add_argument("username",
-                        nargs='+', metavar='USERNAMES',
-                        action="store",
-                        help="One or more usernames to check with social networks."
-                        )
-    parser.add_argument("--browse", "-b",
-                        action="store_true", dest="browse", default=False,
-                        help="Browse to all results on default browser.")
-
-    args = parser.parse_args()
-
-
-    # Argument check
-    # TODO regex check on args.proxy
-    if args.tor and (args.proxy is not None):
-        raise Exception("Tor and Proxy cannot be set at the same time.")
-
-    # Make prompts
-    if args.proxy is not None:
-        print("Using the proxy: " + args.proxy)
-
-    if args.tor or args.unique_tor:
-        print("Using Tor to make requests")
-        print("Warning: some websites might refuse connecting over Tor, so note that using this option might increase connection errors.")
-
-    # Check if both output methods are entered as input.
-    if args.output is not None and args.folderoutput is not None:
-        print("You can only use one of the output methods.")
-        sys.exit(1)
-
-    # Check validity for single username output.
-    if args.output is not None and len(args.username) != 1:
-        print("You can only use --output with a single username")
-        sys.exit(1)
-
-
-    #Create object with all information about sites we are aware of.
-    try:
-        sites = SitesInformation(args.json_file)
-    except Exception as error:
-        print(f"ERROR:  {error}")
-        sys.exit(1)
-
-    #Create original dictionary from SitesInformation() object.
-    #Eventually, the rest of the code will be updated to use the new object
-    #directly, but this will glue the two pieces together.
-    site_data_all = {}
-    for site in sites:
-        site_data_all[site.name] = site.information
-
-    if args.site_list is None:
-        # Not desired to look at a sub-set of sites
-        site_data = site_data_all
-    else:
-        # User desires to selectively run queries on a sub-set of the site list.
-
-        # Make sure that the sites are supported & build up pruned site database.
-        site_data = {}
-        site_missing = []
-        for site in args.site_list:
-            for existing_site in site_data_all:
-                if site.lower() == existing_site.lower():
-                    site_data[existing_site] = site_data_all[existing_site]
-            if not site_data:
-                # Build up list of sites not supported for future error message.
-                site_missing.append(f"'{site}'")
-
-        if site_missing:
-            print(
-                f"Error: Desired sites not found: {', '.join(site_missing)}.")
-            sys.exit(1)
-
-    if args.rank:
-        # Sort data by rank
-        site_dataCpy = dict(site_data)
-        ranked_sites = sorted(site_data, key=lambda k: ("rank" not in k, site_data[k].get("rank", sys.maxsize)))
-        site_data = {}
-        for site in ranked_sites:
-            site_data[site] = site_dataCpy.get(site)
-
-
-    #Create notify object for query results.
-    query_notify = QueryNotifyPrint(result=None,
-                                    verbose=args.verbose,
-                                    print_found_only=args.print_found_only,
-                                    color=not args.no_color)
-
-    # Run report on all specified users.
-    for username in args.username:
-        print()
-
-        results = sherlock(username,
-                           site_data,
-                           query_notify,
-                           tor=args.tor,
-                           unique_tor=args.unique_tor,
-                           proxy=args.proxy,
-                           timeout=args.timeout)
-
-        if args.output:
-            result_file = args.output
-        elif args.folderoutput:
-            # The usernames results should be stored in a targeted folder.
-            # If the folder doesn't exist, create it first
-            os.makedirs(args.folderoutput, exist_ok=True)
-            result_file = os.path.join(args.folderoutput, f"{username}.txt")
-        else:
-            result_file = f"{username}.txt"
-
-        with open(result_file, "w", encoding="utf-8") as file:
-            exists_counter = 0
-            for website_name in results:
-                dictionary = results[website_name]
-                if dictionary.get("status").status == QueryStatus.CLAIMED:
-                    exists_counter += 1
-                    file.write(dictionary["url_user"] + "\n")
-            file.write(f"Total Websites Username Detected On : {exists_counter}")
-
-        if args.csv:
-            with open(username + ".csv", "w", newline='', encoding="utf-8") as csv_report:
-                writer = csv.writer(csv_report)
-                writer.writerow(['username',
-                                 'name',
-                                 'url_main',
-                                 'url_user',
-                                 'exists',
-                                 'http_status',
-                                 'response_time_s'
-                                 ]
-                                )
-                for site in results:
-                    response_time_s = results[site]['status'].query_time
-                    if response_time_s is None:
-                        response_time_s = ""
-                    writer.writerow([username,
-                                     site,
-                                     results[site]['url_main'],
-                                     results[site]['url_user'],
-                                     str(results[site]['status'].status),
-                                     results[site]['http_status'],
-                                     response_time_s
-                                     ]
-                                    )
-
-
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=80)
